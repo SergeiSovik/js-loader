@@ -98,6 +98,7 @@ REL_EXTERNAL=$(patsubst %,$(REL_ROOT)/%,$(SRC_EXTERNAL))
 GCC_EXTERNAL=$(patsubst %,--js %,$(SRC_EXTERNAL))
 
 ## Global External
+REL_PLATFORM=$(patsubst %,$(REL_ROOT)/%,$(INC_PLATFORM))
 GCC_ECMASCRIPT2017=$(GCC_OUT_ECMASCRIPT2017) $(patsubst %,--js %,$(INC_ECMASCRIPT2017)) $(patsubst %,--entry_point %,$(INC_ECMASCRIPT2017))
 GCC_PLATFORM=$(patsubst %,--js %,$(INC_PLATFORM))
 
@@ -107,7 +108,7 @@ test: clean build-release
 
 build-release: $(BIN_MAIN)
 
-$(BIN_MAIN): $(REL_GLOBALS) $(REL_MODULES) $(REL_EXTERNAL) $(REL_LIBS) Makefile
+$(BIN_MAIN): $(REL_PLATFORM) $(REL_GLOBALS) $(REL_MODULES) $(REL_EXTERNAL) $(REL_LIBS) Makefile
 	@echo "Building $(patsubst $(REL_ROOT)/%,%,$@)"
 	@( cd $(REL_ROOT); $(strip $(GCC)) $(GCC_ECMASCRIPT2017) $(GCC_PLATFORM) $(GCC_EXTERNAL) $(GCC_LIBS) $(GCC_MODULES) $(GCC_GLOBALS) --create_source_map "$(patsubst $(REL_ROOT)/%,%,$@).map" --js_output_file "$(patsubst $(REL_ROOT)/%,%,$@)" 2>&1 | ./compiler/errors.sh )
 	@echo "//# sourceMappingURL=$(patsubst $(REL_BIN)/%,%,$@).map" >> $@
