@@ -17,17 +17,25 @@
 'use strict';
 
 import { getTickCounter } from "./../../../include/time.js"
-import { unbindEvent, bindEvent } from "./../../../include/event.js"
+import { unbindEvent, bindEvent, bindOnDocumentReady } from "./../../../include/event.js"
 import { URI } from "./../../../include/uri.js"
 import { VOLUME_MIN } from "./../../js-mixer/modules/sound.js"
 import { HSIA2RGBA, MorphRGBA, RGBA2STR } from "./../../js-color/modules/color.js"
 import { MessagePool } from "./../../js-message/globals/message.js"
 import { Gallery } from "./../../js-gallery/globals/gallery.js"
 import { Mixer } from "./../../js-mixer/globals/mixer.js"
+import { TextureImpl } from "./../../../include/texture.js"
 
 export const evUserInteraction = 'evUserInteraction';
+export const evLoaderStatus = 'evLoaderStatus';
+export const evLoaderFile = 'evLoaderFile';
+export const evLoaderError = 'evLoaderError';
+export const evLoaderComplete = 'evLoaderComplete';
+export const evLoaderTerminate = 'evLoaderTerminate';
 
-const LOADER_SPEED = 10;
+const sLoadingTexture = 'loader#loading';
+const sPressAnyKey = 'Press Any Key';
+const uMaxParallelJobs = 10;
 
 /** @enum {string} */
 const LoaderSupportedType = {
@@ -199,7 +207,7 @@ class CacheImage extends CacheItem {
 
         this.bind();
 
-        this.oLoader.oCore.oGalery.register(this.domImage);
+		Gallery.register(this.domImage);
 
         this.domImage.src = this.sPath;
     }
@@ -213,12 +221,12 @@ class CacheImage extends CacheItem {
         if (this.domImage === null)
             return;
 
-        this.oLoader.oCore.oGalery.unregister(this.domImage);
+        Gallery.unregister(this.domImage);
         this.unbind();
 
         if (this.bReady) {
             this.bReady = false;
-            this.oLoader.oCore.oGalery.remove(this.sKey);
+            Gallery.remove(this.sKey);
             this.oLoader.uncache(this);
         }
 
@@ -238,7 +246,7 @@ class CacheImage extends CacheItem {
 
         this.unbind();
         this.bReady = true;
-        this.oLoader.oCore.oGalery.createTextureImage(this.sKey, this.domImage);
+        Gallery.createTextureImage(this.sKey, this.domImage);
         this.oLoader.cache(this);
         this.oLoader.evLoad(this);
         if (this.fnCallback !== null) this.fnCallback(this);
@@ -496,7 +504,7 @@ class CacheSound extends CacheItem {
             this.domAudio.appendChild(domSource);
         }
 
-        this.oLoader.oCore.oMixer.register(this.domAudio);
+        Mixer.register(this.domAudio);
 
         this.requestPlay();
     }
@@ -546,12 +554,12 @@ class CacheSound extends CacheItem {
 
         this.domAudio.requestPause();
 
-        this.oLoader.oCore.oMixer.unregister(this.domAudio);
+        Mixer.unregister(this.domAudio);
         this.unbind();
 
         if (this.bReady) {
             this.bReady = false;
-            this.oLoader.oCore.oMixer.remove(this.sKey);
+            Mixer.remove(this.sKey);
             this.oLoader.uncache(this);
         }
 
@@ -571,7 +579,7 @@ class CacheSound extends CacheItem {
 
         this.unbind();
         this.bReady = true;
-        this.oLoader.oCore.oMixer.createSound(this.sKey, this.domAudio);
+        Mixer.createSound(this.sKey, this.domAudio);
         this.oLoader.cache(this);
         this.oLoader.evLoad(this);
         if (this.fnCallback !== null) this.fnCallback(this);
@@ -856,12 +864,10 @@ class QueueItem {
     }
 }
 
-export class LoaderImpl {
-    /** @param {cCore} oCore */
-    constructor(oCore) {
-        /** @private */ this.oCore = oCore;
+class LoaderImpl {
+    constructor() {
         /** @private */ this.guiLoading = new RenderLoading(this);
-        /** @private */ this.sBasePath = oCore.__BASE__;
+        /** @private */ this.sBasePath = ROOT;
 
         /** @private @type {LoaderCache} */
         this.oCache = {};
@@ -910,7 +916,7 @@ export class LoaderImpl {
      * @param {string} sBasePath 
      */
     setBasePath(sBasePath) {
-        this.sBasePath = this.oCore.__SERVER__ + '/' + sBasePath.replace(/\\/g, '/').replace(/\/$/, '') + '/';
+        this.sBasePath = ROOT + sBasePath.replace(/\\/g, '/').replace(/\/$/, '') + '/';
     }
 
     /**
@@ -1115,13 +1121,13 @@ export class LoaderImpl {
 
     /** @private */
     update() {
-        let uMaxCount = LOADER_SPEED - this.aLoading.length;
+        let uMaxCount = uMaxParallelJobs - this.aLoading.length;
         let iCount = this.aQueue.length;
         if (this.oCount.uError > 0) iCount = 0;
         if (iCount > uMaxCount) iCount = uMaxCount;
         if (iCount == 0) iCount = -1;
         else if (this.bStatus) {
-            this.oCore.event(Event.evLoaderStatus, this.oCount);
+			MessagePool.recv(evLoaderStatus, this.oCount);
             this.bStatus = false;
         }
         while (iCount > 0) {
@@ -1149,15 +1155,15 @@ export class LoaderImpl {
             this.idUpdate = null;
 
             if (this.oCount.uError > 0)
-                this.onFatal();
+				MessagePool.recv(evLoaderTerminate);
             else {
-                this.onComplete(this.oCache);
+				MessagePool.recv(evLoaderComplete, this.oCache);
             }
         }
     }
 
     run() {
-        this.imgLoading = this.oCore.oGalery.get("loader#loading");
+        this.imgLoading = Gallery.get(sLoadingTexture);
         if (this.idUpdate === null) {
             this.idUpdate = setTimeout(this.evUpdate, 15);
         }
@@ -1253,8 +1259,8 @@ export class LoaderImpl {
         this.oCount.uComplete++;
         this.bStatus = true;
         let iIndex = this.aLoading.indexOf(oCacheItem);
-        this.aLoading.splice(iIndex, 1);
-        this.oCore.event(Event.evLoaderFile, oCacheItem);
+		this.aLoading.splice(iIndex, 1);
+		MessagePool.recv(evLoaderFile, oCacheItem);
     }
 
     /**
@@ -1265,22 +1271,7 @@ export class LoaderImpl {
         this.bStatus = true;
         let iIndex = this.aLoading.indexOf(oCacheItem);
         this.aLoading.splice(iIndex, 1);
-        this.oCore.event(Event.evLoaderError, oCacheItem);
-    }
-
-    /**
-     * @private
-     * @param {*} oCache 
-     */
-    onComplete(oCache) {
-        this.oCore.event(Event.evLoaderComplete, oCache);
-    }
-
-    /**
-     * @private
-     */
-    onFatal() {
-        this.oCore.event(Event.evLoaderTerminate);
+        MessagePool.recv(evLoaderError, oCacheItem);
     }
 }
 
@@ -1325,18 +1316,19 @@ class RenderArc {
 
     /**
      * @private
-     * @param {CanvasRenderingContext2D} context 
+     * @param {CanvasRenderingContext2D} oContext 
      * @param {number} iX 
      * @param {number} iY 
      * @param {number} fSize 
      * @param {Array<number>} aArc 
      * @param {number} fOffset 
+	 * @param {number} uArcElements
      */
-    static renderArc(context, iX, iY, fSize, aArc, fOffset) {
-        for (let i = 0; i < this.uArcElements; i += 2) {
-            context.beginPath();
-            context.arc(iX, iY, fSize, aArc[i] + fOffset, aArc[i + 1] + fOffset, false);
-            context.stroke();
+    static renderArc(oContext, iX, iY, fSize, aArc, fOffset, uArcElements) {
+        for (let i = 0; i < uArcElements; i += 2) {
+            oContext.beginPath();
+            oContext.arc(iX, iY, fSize, aArc[i] + fOffset, aArc[i + 1] + fOffset, false);
+            oContext.stroke();
         }
     }
 
@@ -1351,13 +1343,13 @@ class RenderArc {
         oContext.lineWidth = 7;
         oContext.lineCap = 'square';
         oContext.strokeStyle = '#000000';
-        RenderArc.renderArc(oContext, iX, iY, fSize, this.aBack, this.fOffset / 2);
-        RenderArc.renderArc(oContext, iX, iY, fSize, this.aFront, this.fOffset);
+        RenderArc.renderArc(oContext, iX, iY, fSize, this.aBack, this.fOffset / 2, this.uArcElements);
+        RenderArc.renderArc(oContext, iX, iY, fSize, this.aFront, this.fOffset, this.uArcElements);
 		oContext.lineWidth = 5;
         oContext.strokeStyle = RGBA2STR(MorphRGBA(aRGBARed, HSIA2RGBA(this.fHUE, this.fSaturation, this.fIntensity, 0.5), fError));
-        RenderArc.renderArc(oContext, iX, iY, fSize, this.aBack, this.fOffset / 2);
+        RenderArc.renderArc(oContext, iX, iY, fSize, this.aBack, this.fOffset / 2, this.uArcElements);
         oContext.strokeStyle = RGBA2STR(MorphRGBA(aRGBARed, HSIA2RGBA(this.fHUE, this.fSaturation, this.fIntensity, 1.0), fError));
-        RenderArc.renderArc(oContext, iX, iY, fSize, this.aFront, this.fOffset);
+        RenderArc.renderArc(oContext, iX, iY, fSize, this.aFront, this.fOffset, this.uArcElements);
     }
 }
 
@@ -1408,16 +1400,14 @@ class RenderLoading {
 
         if (fErrorDistance < 1) {
             if ((((fErrorInterval / 500) | 0) % 2) == 0) {
-                let sText = this.oLoader.oCore.oLang.get('wPressAnyKey');
-
                 oContext.font = "normal 40px Arial";
                 oContext.textAlign = "center";
                 oContext.textBaseline = "middle";
                 oContext.strokeStyle = "#000000";
                 oContext.lineWidth = 3;
-                oContext.strokeText(sText, iX, iY);
+                oContext.strokeText(sPressAnyKey, iX, iY);
                 oContext.fillStyle = "#80CCFF";
-                oContext.fillText(sText, iX, iY);
+                oContext.fillText(sPressAnyKey, iX, iY);
             }
         } else {
             let iPercent = (this.oLoader.oCount.uComplete * 100 / this.oLoader.oCount.uTotal) | 0;
@@ -1437,3 +1427,12 @@ class RenderLoading {
         }
     }
 }
+
+/** @type {LoaderImpl | null} */
+export let Loader = null;
+
+function initializeLoader() {
+	Loader = new LoaderImpl();
+}
+
+bindOnDocumentReady(initializeLoader);
