@@ -3,6 +3,7 @@
 **Depends on [js-color](https://github.com/SergioRando/js-color) Library**
 **Depends on [js-mixer](https://github.com/SergioRando/js-mixer) Library**
 **Depends on [js-gallery](https://github.com/SergioRando/js-gallery) Library**
+**Depends on [js-message](https://github.com/SergioRando/js-message) Library**
 
 This is library for a fork project of [PWA](https://github.com/SergioRando/PWA)
 

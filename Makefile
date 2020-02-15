@@ -19,7 +19,7 @@ $(error Use make only inside Project dir, submake requires variable imports)
 endif
 
 # List of Libraries to include
-LIB_LIST=
+LIB_LIST=js-color js-gallery js-mixer js-message
 
 # Main entry point
 # This file executed after all modules
@@ -33,6 +33,11 @@ MODULES=$(patsubst ./%,%,$(shell find ./modules/ -type f -name "*.js"))
 
 # List of external modules, executed only if included in main or global modules
 define EXTERNAL
+	src/include/time.js
+	src/include/event.js
+	src/include/uri.js
+	src/include/texture.js
+	src/include/sound.js
 endef
 
 # List of excluded modules
