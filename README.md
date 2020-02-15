@@ -4,6 +4,8 @@
 **Depends on [js-mixer](https://github.com/SergioRando/js-mixer) Library**
 **Depends on [js-gallery](https://github.com/SergioRando/js-gallery) Library**
 **Depends on [js-message](https://github.com/SergioRando/js-message) Library**
+**Depends on [js-animation](https://github.com/SergioRando/js-animation) Library**
+**Depends on [js-display](https://github.com/SergioRando/js-display) Library**
 
 This is library for a fork project of [PWA](https://github.com/SergioRando/PWA)
 

@@ -19,7 +19,7 @@ $(error Use make only inside Project dir, submake requires variable imports)
 endif
 
 # List of Libraries to include
-LIB_LIST=js-color js-gallery js-mixer js-message
+LIB_LIST=js-color js-gallery js-mixer js-message js-animation js-display
 
 # Main entry point
 # This file executed after all modules
