@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 Sergio Rando <segio.rando@yahoo.com>
+ * Copyright 2000-2020 Sergio Rando <segio.rando@yahoo.com>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,6 +14,5 @@
  * limitations under the License.
  */
 
-"use strict";
+'use strict';
 
-platform.console.log('js-loader', 'Skip Test');
