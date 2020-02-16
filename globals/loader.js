@@ -17,7 +17,7 @@
 'use strict';
 
 import { getTickCounter } from "./../../../include/time.js"
-import { unbindEvent, bindEvent, bindOnDocumentReady } from "./../../../include/event.js"
+import { unbindEvent, bindEvent } from "./../../../include/event.js"
 import { URI } from "./../../../include/uri.js"
 import { VOLUME_MIN } from "./../../js-mixer/modules/sound.js"
 import { HSIA2RGBA, MorphRGBA, RGBA2STR } from "./../../js-color/modules/color.js"
@@ -26,12 +26,14 @@ import { Gallery } from "./../../js-gallery/globals/gallery.js"
 import { Mixer } from "./../../js-mixer/globals/mixer.js"
 import { TextureImpl } from "./../../../include/texture.js"
 
-export const evUserInteraction = 'evUserInteraction';
+export const evLoaderStart = 'evLoaderStart';
+export const evLoaderStop = 'evLoaderStop';
 export const evLoaderStatus = 'evLoaderStatus';
 export const evLoaderFile = 'evLoaderFile';
 export const evLoaderError = 'evLoaderError';
 export const evLoaderComplete = 'evLoaderComplete';
 export const evLoaderTerminate = 'evLoaderTerminate';
+export const evUserInteraction = 'evUserInteraction';
 
 const sLoadingTexture = 'loader#loading';
 const sPressAnyKey = 'Press Any Key';
@@ -126,19 +128,19 @@ class CacheItem {
     /**
      * @param {LoaderImpl} oLoader
      * @param {string | null} sGroup 
-     * @param {string} sKey 
+     * @param {string | null} sKey 
      * @param {string} sUri 
      * @param {string} sType 
      * @param {Function | null} fnCallback
      */
     constructor(oLoader, sGroup, sKey, sUri, sType, fnCallback) {
         /** @protected */ this.oLoader = oLoader;
-        /** @protected */ this.sGroup = sGroup;
-		/** @protected */ this.sKey = sKey;
-		/** @protected */ this.sUri = sUri;
-		/** @protected */ this.aUri = (oLoader.fnFileNamePreprocessor === null) ? [ sUri ] : oLoader.fnFileNamePreprocessor(sUri);
+        this.sGroup = sGroup;
+		this.sKey = sKey;
+		this.sUri = sUri;
+		this.aUri = (oLoader.fnFileNamePreprocessor === null) ? [ sUri ] : oLoader.fnFileNamePreprocessor(sUri);
 		/** @protected */ this.uIndex = 0;
-        /** @protected */ this.sType = sType;
+        this.sType = sType;
 
         /** @private */ this.fnCallback = fnCallback;
 
@@ -426,7 +428,8 @@ class CacheImage extends CacheItem {
 
 			if (this.bReady) {
 				this.bReady = false;
-				Gallery.remove(this.sKey);
+				if (this.sKey !== null)
+					Gallery.remove(this.sKey);
 				this.oLoader.uncache(this);
 			}
 
@@ -771,7 +774,8 @@ class CacheSound extends CacheItem {
 
 			if (this.bReady) {
 				this.bReady = false;
-				Mixer.remove(this.sKey);
+				if (this.sKey !== null)
+					Mixer.remove(this.sKey);
 				this.oLoader.uncache(this);
 			}
 
@@ -868,11 +872,11 @@ class CacheSound extends CacheItem {
     }
 }
 
-class CacheData extends CacheItem {
+export class CacheData extends CacheItem {
     /**
      * @param {LoaderImpl} oLoader
      * @param {string | null} sGroup 
-     * @param {string} sKey 
+     * @param {string | null} sKey 
      * @param {string} sUri
      * @param {string} sExtension
      * @param {Function | null} fnCallback
@@ -880,8 +884,8 @@ class CacheData extends CacheItem {
     constructor(oLoader, sGroup, sKey, sUri, sExtension, fnCallback) {
         super(oLoader, sGroup, sKey, sUri, typeOf(sExtension), fnCallback);
 
-        /** @private */ this.sResponseType = responseTypeOf(sExtension);
-        /** @private @type {*} */ this.oData = null;
+        this.sResponseType = responseTypeOf(sExtension);
+        /** @type {*} */ this.oData = null;
 
         /** @private @type {Array<*>} */ this.aQuery = [];
         /** @private @type {Array<*>} */ this.aSending = [];
@@ -1009,7 +1013,7 @@ class QueueItem {
 
 class LoaderImpl {
     constructor() {
-        /** @private */ this.guiLoading = new RenderLoading(this);
+        this.guiLoading = new RenderLoading(this);
         /** @private */ this.sBasePath = ROOT;
 
         /** @private @type {LoaderCache} */
@@ -1148,6 +1152,24 @@ class LoaderImpl {
         }
 
         this.aSearch.push(sGroup + ':' + sKey + ':' + sPath);
+        this.aQueue.push(oQueueItem);
+        this.oCount.uTotal++;
+    }
+
+    /**
+     * @param {string} sURL 
+     * @param {Function=} fnCallback
+     */
+    loadJson(sURL, fnCallback) {
+        let oURI = new URI(this.sBasePath, sURL);
+		
+		/** @type {QueueItem} */
+		let oQueueItem;
+		
+        let sPath = oURI.build();
+        oQueueItem = new QueueItem(new CacheData(this, null, null, sPath, ".json", fnCallback || null), null);
+
+        this.aSearch.push(null + ':' + null + ':' + sPath);
         this.aQueue.push(oQueueItem);
         this.oCount.uTotal++;
     }
@@ -1305,12 +1327,14 @@ class LoaderImpl {
             else {
 				MessagePool.recv(evLoaderComplete, this.oCache);
             }
+			MessagePool.recv(evLoaderStop);
         }
     }
 
     run() {
         this.imgLoading = Gallery.get(sLoadingTexture);
         if (this.idUpdate === null) {
+			MessagePool.recv(evLoaderStart);
             this.idUpdate = setTimeout(this.evUpdate, 15);
         }
     }
@@ -1373,29 +1397,33 @@ class LoaderImpl {
      * @param {CacheItem} oCacheItem
      */
     cache(oCacheItem) {
-        if (oCacheItem.sGroup !== null) {
-            if (this.oCache[oCacheItem.sGroup] === undefined)
-                this.oCache[oCacheItem.sGroup] = {};
+		if (oCacheItem.sKey !== null) {
+			if (oCacheItem.sGroup !== null) {
+				if (this.oCache[oCacheItem.sGroup] === undefined)
+					this.oCache[oCacheItem.sGroup] = {};
 
-            let o = /** @type {*} */ (this.oCache[oCacheItem.sGroup]);
-            o[oCacheItem.sKey] = oCacheItem;
-        } else
-            this.oCache[oCacheItem.sKey] = oCacheItem;
+				let o = /** @type {*} */ (this.oCache[oCacheItem.sGroup]);
+				o[oCacheItem.sKey] = oCacheItem;
+			} else
+				this.oCache[oCacheItem.sKey] = oCacheItem;
+		}
     }
 
     /**
      * @param {CacheItem} oCacheItem
      */
     uncache(oCacheItem) {
-        if (oCacheItem.sGroup !== null) {
-            if (this.oCache[oCacheItem.sGroup] === undefined)
-                return;
-            if (this.oCache[oCacheItem.sGroup].hasOwnProperty(oCacheItem.sKey)) {
-                let o = /** @type {*} */ (this.oCache[oCacheItem.sGroup]);
-                delete o[oCacheItem.sKey];
-            }
-        } else
-            delete this.oCache[oCacheItem.sKey];
+		if (oCacheItem.sKey !== null) {
+			if (oCacheItem.sGroup !== null) {
+				if (this.oCache[oCacheItem.sGroup] === undefined)
+					return;
+				if (this.oCache[oCacheItem.sGroup].hasOwnProperty(oCacheItem.sKey)) {
+					let o = /** @type {*} */ (this.oCache[oCacheItem.sGroup]);
+					delete o[oCacheItem.sKey];
+				}
+			} else
+				delete this.oCache[oCacheItem.sKey];
+		}
     }
 
     /**
@@ -1483,15 +1511,16 @@ class RenderArc {
      * @param {number} iX 
      * @param {number} iY 
      * @param {number} fSize 
+	 * @param {number} fScale
 	 * @param {number} fError
      */
-    render(oContext, iX, iY, fSize, fError) {
-        oContext.lineWidth = 7;
+    render(oContext, iX, iY, fSize, fScale, fError) {
+        oContext.lineWidth = 0.07 * fScale;
         oContext.lineCap = 'square';
         oContext.strokeStyle = '#000000';
         RenderArc.renderArc(oContext, iX, iY, fSize, this.aBack, this.fOffset / 2, this.uArcElements);
         RenderArc.renderArc(oContext, iX, iY, fSize, this.aFront, this.fOffset, this.uArcElements);
-		oContext.lineWidth = 5;
+		oContext.lineWidth = 0.05 * fScale;
         oContext.strokeStyle = RGBA2STR(MorphRGBA(aRGBARed, HSIA2RGBA(this.fHUE, this.fSaturation, this.fIntensity, 0.5), fError));
         RenderArc.renderArc(oContext, iX, iY, fSize, this.aBack, this.fOffset / 2, this.uArcElements);
         oContext.strokeStyle = RGBA2STR(MorphRGBA(aRGBARed, HSIA2RGBA(this.fHUE, this.fSaturation, this.fIntensity, 1.0), fError));
@@ -1525,7 +1554,7 @@ class RenderLoading {
      * @param {number} iX 
      * @param {number} iY 
      */
-    render(oContext, iX, iY) {
+    render(oContext, iX, iY, fScale) {
         let fErrorInterval = getTickCounter() - this.oLoader.fErrorUserInteractionTick;
         let fErrorDistance = (this.oLoader.fErrorUserInteractionTick === 0) ? 1 : (
             (this.oLoader.uErrorUserInteractionCount === 0) ? Math.min(fErrorInterval / 250, 1) : Math.max(1 - (fErrorInterval / 250), 0)
@@ -1537,8 +1566,8 @@ class RenderLoading {
 
         for (let i = 0; i < this.uArcsCount; i++) {
             let guiArc = this.guiArcs[i];
-            var fSize = i * 10 + 50;
-            guiArc.render(oContext, iX, iY, fSize, fErrorDistance);
+            var fSize = (i * 0.10 + 0.50) * fScale;
+            guiArc.render(oContext, iX, iY, fSize, fScale, fErrorDistance);
             guiArc.fOffset += guiArc.fSpeed;
             if (guiArc.fOffset >= 4 * Math.PI) guiArc.fOffset -= 4 * Math.PI;
             if (guiArc.fOffset < 0) guiArc.fOffset += 4 * Math.PI;
@@ -1546,11 +1575,11 @@ class RenderLoading {
 
         if (fErrorDistance < 1) {
             if ((((fErrorInterval / 500) | 0) % 2) == 0) {
-                oContext.font = "normal 40px Arial";
+                oContext.font = "normal " + ((0.4 * fScale) | 0) + "px Arial";
                 oContext.textAlign = "center";
                 oContext.textBaseline = "middle";
                 oContext.strokeStyle = "#000000";
-                oContext.lineWidth = 3;
+                oContext.lineWidth = 0.03 * fScale;
                 oContext.strokeText(sPressAnyKey, iX, iY);
                 oContext.fillStyle = "#80CCFF";
                 oContext.fillText(sPressAnyKey, iX, iY);
@@ -1561,11 +1590,11 @@ class RenderLoading {
             if (iPercent > 0) {
                 let sText = iPercent + '%';
 
-                oContext.font = "normal 28px Arial";
+                oContext.font = "normal " + ((0.28 * fScale) | 0) + "px Arial";
                 oContext.textAlign = "center";
                 oContext.textBaseline = "middle";
                 oContext.strokeStyle = "#000000";
-                oContext.lineWidth = 3;
+                oContext.lineWidth = 0.03 * fScale;
                 oContext.strokeText(sText, iX, iY);
                 oContext.fillStyle = "#80CCFF";
                 oContext.fillText(sText, iX, iY);
@@ -1575,10 +1604,4 @@ class RenderLoading {
 }
 
 /** @type {LoaderImpl | null} */
-export let Loader = null;
-
-function initializeLoader() {
-	Loader = new LoaderImpl();
-}
-
-bindOnDocumentReady(initializeLoader);
+export let Loader = new LoaderImpl();
