@@ -105,41 +105,237 @@ function responseTypeOf(sEXT) {
     return LoaderResponseType.TEXT;
 }
 
+/**
+ * @extends {XMLHttpRequest}
+ */
+class XMLHttpRequestEx {
+    constructor() {
+        /** @type {CacheItem} */
+        this.oCacheItem;
+        /** @type {Function} */
+        this.evReadyStateChange;
+
+        let ajaxRequest = /** @type {!XMLHttpRequestEx} */ ( new XMLHttpRequest() );
+
+        return ajaxRequest;
+    }
+}
+
 /** @abstract */
 class CacheItem {
     /**
      * @param {LoaderImpl} oLoader
      * @param {string | null} sGroup 
      * @param {string} sKey 
-     * @param {string} sPath 
+     * @param {string} sUri 
      * @param {string} sType 
      * @param {Function | null} fnCallback
      */
-    constructor(oLoader, sGroup, sKey, sPath, sType, fnCallback) {
-        this.oLoader = oLoader;
-        this.sGroup = sGroup;
-        this.sKey = sKey;
-        this.sPath = sPath;
-        this.sType = sType;
+    constructor(oLoader, sGroup, sKey, sUri, sType, fnCallback) {
+        /** @protected */ this.oLoader = oLoader;
+        /** @protected */ this.sGroup = sGroup;
+		/** @protected */ this.sKey = sKey;
+		/** @protected */ this.sUri = sUri;
+		/** @protected */ this.aUri = (oLoader.fnFileNamePreprocessor === null) ? [ sUri ] : oLoader.fnFileNamePreprocessor(sUri);
+		/** @protected */ this.uIndex = 0;
+        /** @protected */ this.sType = sType;
 
-        this.fnCallback = fnCallback;
+        /** @private */ this.fnCallback = fnCallback;
 
-        /** @type {boolean} */
-        this.bReady;
-        this.idRepeat = null;
-        this.iRepeat = -1; // Infinite
-        this.uRetry = 0;
-        this.uNext = 0;
+        /** @protected @type {boolean} */ this.bReady;
+        /** @private */ this.idRepeat = null;
+        /** @private */ this.iRepeat = -1; // Infinite
+        /** @private */ this.uRetry = 0;
+		/** @private */ this.uNext = 0;
+		
+		/** @protected @type {XMLHttpRequestEx | null} */ this.ajaxRequest = null;
     }
 
-    /** @abstract */
-    create() {}
+    /**
+	 * @protected
+	 */
+    bindAjax() {
+        this.ajaxRequest.evReadyStateChange = this.evReadyStateChange.bind(this);
+        bindEvent(this.ajaxRequest, 'readystatechange', this.ajaxRequest.evReadyStateChange);
+	}
 
-    /** @abstract */
+    /**
+	 * @protected
+	 */
+    unbindAjax() {
+		if (this.ajaxRequest === null)
+			return;
+
+		unbindEvent(this.ajaxRequest, 'readystatechange', this.ajaxRequest.evReadyStateChange);
+		delete this.ajaxRequest.evReadyStateChange;
+    }
+
+    /**
+	 * @protected
+	 * @returns {boolean}
+	 */
+    createAjax() {
+		if (this.ajaxRequest !== null) {
+			return false;
+		}
+
+		this.bReady = false;
+		this.ajaxRequest = new XMLHttpRequestEx();
+		this.bindAjax();
+		
+		return true;
+	}
+	
+	/**
+	 * @protected
+	 */
+	startAjax() {
+		this.ajaxRequest.open('GET', this.aUri[this.uIndex], true);
+		this.ajaxRequest.responseType = LoaderResponseType.BLOB;
+		this.ajaxRequest.send(null);
+	}
+
+	/**
+	 * @protected
+	 */
+	stopAjax() {
+        if (this.idRepeat !== null) {
+            clearTimeout(this.idRepeat);
+            this.idRepeat = null;
+        }
+
+		if (this.ajaxRequest !== null) {
+			this.unbindAjax();
+
+			if (this.bReady) {
+				this.bReady = false;
+			}
+
+			this.ajaxRequest = null;
+		}
+	}
+
+	/**
+	 * @protected
+	 */
+    create() {
+		if (this.createAjax())
+			this.startAjax();
+	}
+
+    /**
+	 * @abstract
+	 * @protected
+	 */
     cancel() {}
 
-    /** @abstract */
-    release() {}
+	/**
+	 * @protected
+	 */
+    release() {
+        this.oLoader.oCount.uError -= this.uRetry;
+        this.uRetry = 0;
+
+        this.cancel();
+    }
+
+	/**
+	 * @protected
+	 * @param {*} event
+	 */
+	evReadyStateChange(event) {
+		if (this.ajaxRequest.readyState === 4) {
+			this.onStatus(event, this.ajaxRequest.status);
+		}
+	}
+
+	/**
+	 * @private
+	 * @param {*} event 
+	 * @param {number} status
+	 */
+	onStatus(event, status) {
+		/**
+		 * 0 - Connection Error
+		 * 200 - OK
+		 * 400 - Resource Not Found
+		 * 500 - Internal Server Error
+		 */
+		if (status === 200) {
+			this.onLoadAjax(event);
+		} else if ((status >= 400) && (status < 500)) {
+			this.uIndex++;
+			if (this.uIndex < this.aUri.length) {
+				this.cancel();
+				this.onErrorAjax();
+				this.create();
+			} else {
+				this.uIndex = 0;
+				this.onLoadError(false);
+			}
+		} else {
+			this.onLoadError(true);
+		}
+	}
+
+	/**
+	 * @abstract
+	 * @protected
+	 * @param {*} event
+	 */
+	onLoadAjax(event) {}
+
+	/**
+	 * @protected
+	 */
+	onErrorAjax() {}
+
+	/**
+	 * @protected
+	 */
+	onLoadComplete() {
+        this.oLoader.oCount.uError -= this.uRetry;
+        this.bReady = true;
+        this.oLoader.evLoad(this);
+        if (this.fnCallback !== null) this.fnCallback(this);
+	}
+
+	/**
+	 * @private
+	 * @param {boolean} bRetry 
+	 */
+	onLoadError(bRetry) {
+		this.oLoader.oCount.uError++;
+		this.oLoader.bStatus = true;
+
+		this.cancel();
+
+		this.onErrorAjax();
+
+		this.uRetry++;
+		if ((bRetry) && ((this.iRepeat < 0) || (this.uRetry <= this.iRepeat))) {
+			this.uNext += 3000 + ((Math.random() * 2000) | 0);
+			if (this.uNext > 60000) this.uNext = 60000;
+			this.idRepeat = setTimeout(this.create.bind(this), this.uNext);
+		} else {
+			this.oLoader.evError(this);
+		}
+	}
+
+	/**
+	 * @abstract
+	 * @protected
+	 * @param {*} event 
+	 */
+	evLoad(event) {}
+	
+	/**
+	 * @protected
+	 * @param {*} event
+	 */
+	evError(event) {
+		this.onLoadError(true);
+	}
 }
 
 /**
@@ -165,108 +361,97 @@ class CacheImage extends CacheItem {
      * @param {LoaderImpl} oLoader
      * @param {string | null} sGroup 
      * @param {string} sKey 
-     * @param {string} sPath 
+     * @param {string} sUri 
      * @param {Function | null} fnCallback
      */
-    constructor(oLoader, sGroup, sKey, sPath, fnCallback) {
-        super(oLoader, sGroup, sKey, sPath, LoaderSupportedType.IMAGE, fnCallback);
+    constructor(oLoader, sGroup, sKey, sUri, fnCallback) {
+        super(oLoader, sGroup, sKey, sUri, LoaderSupportedType.IMAGE, fnCallback);
 
-        /** @type {HTMLImageElementEx} */
-        this.domImage = null;
+        /** @private @type {HTMLImageElementEx | null} */ this.domImage = null;
     }
 
-    /** @private */
-    bind() {
-        this.domImage.evLoad = CacheImage.prototype.evLoad.bind(this);
-        this.domImage.evError = CacheImage.prototype.evError.bind(this);
-        this.domImage.release = CacheImage.prototype.release.bind(this);
+	/**
+	 * @private
+	 */
+	bindImage() {
+		this.domImage.evLoad = this.evLoad.bind(this);
+        this.domImage.evError = this.evError.bind(this);
+        this.domImage.release = this.release.bind(this);
 
         bindEvent(this.domImage, 'load', this.domImage.evLoad);
         bindEvent(this.domImage, 'error', this.domImage.evError);
     }
 
-    /** @private */
-    unbind() {
-        if (this.domImage === null)
-            return;
+    /**
+	 * @private
+	 */
+    unbindImage() {
+		if (this.domImage === null)
+			return;
 
-        unbindEvent(this.domImage, 'load', this.domImage.evLoad);
-        unbindEvent(this.domImage, 'error', this.domImage.evError);
+		unbindEvent(this.domImage, 'load', this.domImage.evLoad);
+		unbindEvent(this.domImage, 'error', this.domImage.evError);
 
-        delete this.domImage.evLoad;
-        delete this.domImage.evError;
-        delete this.domImage.release;
+		delete this.domImage.evLoad;
+		delete this.domImage.evError;
+		delete this.domImage.release;
     }
 
-    create() {
+	/**
+	 * @private
+	 */
+    createImage() {
         if (this.domImage !== null)
             return;
 
         this.bReady = false;
         this.domImage = new HTMLImageElementEx();
 
-        this.bind();
+        this.bindImage();
 
 		Gallery.register(this.domImage);
 
-        this.domImage.src = this.sPath;
+        this.domImage.src = this.aUri[this.uIndex];
     }
 
+	/**
+	 * @protected
+	 */
     cancel() {
-        if (this.idRepeat !== null) {
-            clearTimeout(this.idRepeat);
-            this.idRepeat = null;
-        }
+		this.stopAjax();
 
-        if (this.domImage === null)
-            return;
+        if (this.domImage !== null) {
+	        Gallery.unregister(this.domImage);
+        	this.unbindImage();
 
-        Gallery.unregister(this.domImage);
-        this.unbind();
+			if (this.bReady) {
+				this.bReady = false;
+				Gallery.remove(this.sKey);
+				this.oLoader.uncache(this);
+			}
 
-        if (this.bReady) {
-            this.bReady = false;
-            Gallery.remove(this.sKey);
-            this.oLoader.uncache(this);
-        }
-
-        this.domImage = null;
+			this.domImage = null;
+		}
     }
 
-    release() {
-        this.oLoader.oCount.uError -= this.uRetry;
-        this.uRetry = 0;
+	/**
+	 * @protected
+	 * @param {*} event
+	 */
+	onLoadAjax(event) {
+		this.unbindAjax();
+		this.ajaxRequest = null;
+		this.createImage();
+	}
 
-        this.cancel();
-    }
-
-    /** @param {*} _event */
-    evLoad(_event) {
-        this.oLoader.oCount.uError -= this.uRetry;
-
-        this.unbind();
-        this.bReady = true;
-        Gallery.createTextureImage(this.sKey, this.domImage);
-        this.oLoader.cache(this);
-        this.oLoader.evLoad(this);
-        if (this.fnCallback !== null) this.fnCallback(this);
-    }
-
-    /** @param {*} _event */
-    evError(_event) {
-        this.oLoader.oCount.uError++;
-        this.oLoader.bStatus = true;
-
-        this.cancel();
-
-        this.uRetry++;
-        if ((this.iRepeat < 0) || (this.uRetry <= this.iRepeat)) {
-            this.uNext += 3000 + ((Math.random() * 2000) | 0);
-            if (this.uNext > 60000) this.uNext = 60000;
-            this.idRepeat = setTimeout(this.create.bind(this), this.uNext);
-        } else {
-            this.oLoader.evError(this);
-        }
+	/**
+	 * @param {*} event
+	 */
+    evLoad(event) {
+        this.unbindImage();
+		Gallery.createTextureImage(this.sKey, this.domImage);
+		this.oLoader.cache(this);
+		this.onLoadComplete();
     }
 }
 
@@ -405,30 +590,31 @@ class CacheSound extends CacheItem {
      * @param {LoaderImpl} oLoader
      * @param {string | null} sGroup 
      * @param {string} sKey 
-     * @param {string} sPath 
+     * @param {string} sUri 
      * @param {Function | null} fnCallback
      */
-    constructor(oLoader, sGroup, sKey, sPath, fnCallback) {
-        super(oLoader, sGroup, sKey, sPath, LoaderSupportedType.SOUND, fnCallback);
+    constructor(oLoader, sGroup, sKey, sUri, fnCallback) {
+        super(oLoader, sGroup, sKey, sUri, LoaderSupportedType.SOUND, fnCallback);
 
-        /** @type {HTMLAudioElementEx} */
-        this.domAudio = null;
-        this.uSource = 0;
-        this.uError = 0;
+        /** @private @type {HTMLAudioElementEx | null} */ this.domAudio = null;
+        /** @private */ this.uSource = 0;
+        /** @private */ this.uError = 0;
 
-        this.bPlayAgain = false;
-        /** @type {Function} */ this.evRequestPlayAgain = CacheSound.prototype.onRequestPlayAgain.bind(this);
-        /** @type {Function} */ this.evRequestPlayFailed = CacheSound.prototype.onRequestPlayFailed.bind(this);
+        /** @private */ this.bPlayAgain = false;
+        /** @private @type {Function} */ this.evRequestPlayAgain = this.onRequestPlayAgain.bind(this);
+        /** @private @type {Function} */ this.evRequestPlayFailed = this.onRequestPlayFailed.bind(this);
     }
 
-    /** @private */
-    bind() {
-        this.domAudio.evLoad = CacheSound.prototype.evLoad.bind(this);
-        this.domAudio.evError = CacheSound.prototype.evError.bind(this);
-        this.domAudio.evPause = CacheSound.prototype.evPause.bind(this);
-        this.domAudio.evDurationChange = CacheSound.prototype.evDurationChange.bind(this);
-        this.domAudio.evEnded = CacheSound.prototype.evEnded.bind(this);
-        this.domAudio.evCanPlayThrough = CacheSound.prototype.evCanPlayThrough.bind(this);
+    /**
+	 * @private
+	 */
+    bindSound() {
+        this.domAudio.evLoad = this.evLoad.bind(this);
+        this.domAudio.evError = this.evError.bind(this);
+        this.domAudio.evPause = this.evPause.bind(this);
+        this.domAudio.evDurationChange = this.evDurationChange.bind(this);
+        this.domAudio.evEnded = this.evEnded.bind(this);
+        this.domAudio.evCanPlayThrough = this.evCanPlayThrough.bind(this);
 
         bindEvent(this.domAudio, 'error', this.domAudio.evError);
         bindEvent(this.domAudio, 'pause', this.domAudio.evPause);
@@ -437,8 +623,10 @@ class CacheSound extends CacheItem {
         bindEvent(this.domAudio, 'canplaythrough', this.domAudio.evCanPlayThrough);
     }
 
-    /** @private */
-    unbind() {
+    /**
+	 * @private
+	 */
+    unbindSound() {
 		this.bPlayAgain = false;
 
 		if (MessagePool.unregister(evUserInteraction, this.evRequestPlayAgain)) {
@@ -470,28 +658,48 @@ class CacheSound extends CacheItem {
         delete this.domAudio.evCanPlayThrough;
     }
 
-    create() {
+	/**
+	 * @override
+	 * @protected
+	 */
+	startAjax() {
+		let sPath = this.aUri[this.uIndex];
+		let isSND = /\.snd$/i.test(sPath);
+		if (isSND) {
+			sPath = sPath.replace(/\.snd$/i, ".mp3");
+		}
+
+		this.ajaxRequest.open('GET', sPath, true);
+		this.ajaxRequest.responseType = LoaderResponseType.BLOB;
+		this.ajaxRequest.send(null);
+	}
+
+	/**
+	 * @private
+	 */
+    createSound() {
         if (this.domAudio !== null)
             return;
 
         this.bReady = false;
         this.domAudio = new HTMLAudioElementEx();
 
-        this.bind();
+        this.bindSound();
 
         this.domAudio.autoplay = false;
         this.domAudio.volume = VOLUME_MIN;
         this.domAudio.preload = "auto";
 
-        let isSND = /\.snd$/i.test(this.sPath);
-        let isOGG = /\.ogg$/i.test(this.sPath);
-        let isMP3 = /\.mp3$/i.test(this.sPath);
+		let sPath = this.aUri[this.uIndex];
+        let isSND = /\.snd$/i.test(sPath);
+        let isOGG = /\.ogg$/i.test(sPath);
+        let isMP3 = /\.mp3$/i.test(sPath);
 
         if (isMP3 || isSND) {
             let domSource = window.document.createElement('source');
             bindEvent( /** @type {HTMLElement} */ (domSource), 'error', this.domAudio.evError);
             this.uSource++;
-            domSource.src = (isMP3 ? this.sPath : this.sPath.replace(/\.snd$/i, ".mp3"));
+            domSource.src = (isMP3 ? sPath : sPath.replace(/\.snd$/i, ".mp3"));
             domSource.type = 'audio/mpeg';
             this.domAudio.appendChild(domSource);
         }
@@ -499,7 +707,7 @@ class CacheSound extends CacheItem {
             let domSource = window.document.createElement('source');
             bindEvent( /** @type {HTMLElement} */ (domSource), 'error', this.domAudio.evError);
             this.uSource++;
-            domSource.src = (isOGG ? this.sPath : this.sPath.replace(/\.snd$/i, ".ogg"));
+            domSource.src = (isOGG ? sPath : sPath.replace(/\.snd$/i, ".ogg"));
             domSource.type = "audio/ogg";
             this.domAudio.appendChild(domSource);
         }
@@ -509,13 +717,17 @@ class CacheSound extends CacheItem {
         this.requestPlay();
     }
 
-    /** @private */
+    /**
+	 * @private
+	 */
     requestPlay() {
         this.domAudio.currentTime = 0;
         this.domAudio.requestPlay(null, this.evRequestPlayFailed);
     }
 
-    /** @private */
+    /**
+	 * @private
+	 */
     onRequestPlayAgain() {
         this.bPlayAgain = false;
         this.oLoader.uErrorUserInteractionCount--;
@@ -525,7 +737,9 @@ class CacheSound extends CacheItem {
         this.requestPlay();
     }
 
-    /** @private */
+    /**
+	 * @private
+	 */
     onRequestPlayFailed() {
         if (this.domAudio === null)
             return;
@@ -540,72 +754,56 @@ class CacheSound extends CacheItem {
         //console.log('Unable to load sound resource, user interaction required! Press any key to continue...');
     }
 
+	/**
+	 * @protected
+	 */
     cancel() {
-        if (this.idRepeat !== null) {
-            clearTimeout(this.idRepeat);
-            this.idRepeat = null;
-        }
+		this.stopAjax();
 
-        if (this.domAudio === null)
-            return;
+        if (this.domAudio !== null) {
+			this.uSource = 0;
+			this.uError = 0;
 
-        this.uSource = 0;
-        this.uError = 0;
+			this.domAudio.requestPause();
 
-        this.domAudio.requestPause();
+			Mixer.unregister(this.domAudio);
+			this.unbindSound();
 
-        Mixer.unregister(this.domAudio);
-        this.unbind();
+			if (this.bReady) {
+				this.bReady = false;
+				Mixer.remove(this.sKey);
+				this.oLoader.uncache(this);
+			}
 
-        if (this.bReady) {
-            this.bReady = false;
-            Mixer.remove(this.sKey);
-            this.oLoader.uncache(this);
-        }
-
-        this.domAudio = null;
+			this.domAudio = null;
+		}
     }
 
-    release() {
-        this.oLoader.oCount.uError -= this.uRetry;
-        this.uRetry = 0;
+	/**
+	 * @protected
+	 * @param {*} event
+	 */
+	onLoadAjax(event) {
+		this.unbindAjax();
+		this.ajaxRequest = null;
+		this.createSound();
+	}
 
-        this.cancel();
+	/**
+	 * @protected
+	 * @param {*} event 
+	 */
+    evLoad(event) {
+        this.unbindSound();
+		Mixer.createSound(this.sKey, this.domAudio);
+		this.oLoader.cache(this);
+		this.onLoadComplete();
     }
 
-    /** @param {*} _event */
-    evLoad(_event) {
-        this.oLoader.oCount.uError -= this.uRetry;
-
-        this.unbind();
-        this.bReady = true;
-        Mixer.createSound(this.sKey, this.domAudio);
-        this.oLoader.cache(this);
-        this.oLoader.evLoad(this);
-        if (this.fnCallback !== null) this.fnCallback(this);
-    }
-
-    /** @param {*} _event */
-    evError(_event) {
-        this.uError++;
-        if (this.uError === this.uSource) {
-            this.oLoader.oCount.uError++;
-            this.oLoader.bStatus = true;
-
-            this.cancel();
-
-            this.uRetry++;
-            if ((this.iRepeat < 0) || (this.uRetry <= this.iRepeat)) {
-                this.uNext += 3000 + ((Math.random() * 2000) | 0);
-                if (this.uNext > 60000) this.uNext = 60000;
-                this.idRepeat = setTimeout(this.create.bind(this), this.uNext);
-            } else {
-                this.oLoader.evError(this);
-            }
-        }
-    }
-
-    /** @param {*} event */
+    /**
+	 * @private
+	 * @param {*} event
+	 */
     evPause(event) {
         //console.log(format("Pause {0}", this.sKey));
 
@@ -625,8 +823,11 @@ class CacheSound extends CacheItem {
         }
     }
 
-    /** @param {*} _event */
-    evDurationChange(_event) {
+    /**
+	 * @private
+	 * @param {*} event
+	 */
+    evDurationChange(event) {
         //console.log(format("Playing {0}", this.sKey));
 
         if (this.bPlayAgain)
@@ -640,13 +841,19 @@ class CacheSound extends CacheItem {
         }
     }
 
-    /** @param {*} _event */
-    evEnded(_event) {
+    /**
+	 * @private
+	 * @param {*} event
+	 */
+    evEnded(event) {
         //console.log(format("End {0}", this.sKey));
     }
 
-    /** @param {*} _event */
-    evCanPlayThrough(_event) {
+    /**
+	 * @private
+	 * @param {*} event
+	 */
+    evCanPlayThrough(event) {
         //console.log(format("Buffered {0}", this.sKey));
 
         if (this.bPlayAgain)
@@ -661,59 +868,23 @@ class CacheSound extends CacheItem {
     }
 }
 
-/**
- * @extends {XMLHttpRequest}
- */
-class XMLHttpRequestEx {
-    constructor() {
-        /** @type {CacheItem} */
-        this.oCacheItem;
-        /** @type {Function} */
-        this.evReadyStateChange;
-
-        let ajaxRequest = /** @type {!XMLHttpRequestEx} */ ( new XMLHttpRequest() );
-
-        return ajaxRequest;
-    }
-}
-
 class CacheData extends CacheItem {
     /**
      * @param {LoaderImpl} oLoader
      * @param {string | null} sGroup 
      * @param {string} sKey 
-     * @param {string} sPath
+     * @param {string} sUri
      * @param {string} sExtension
      * @param {Function | null} fnCallback
      */
-    constructor(oLoader, sGroup, sKey, sPath, sExtension, fnCallback) {
-        super(oLoader, sGroup, sKey, sPath, typeOf(sExtension), fnCallback);
+    constructor(oLoader, sGroup, sKey, sUri, sExtension, fnCallback) {
+        super(oLoader, sGroup, sKey, sUri, typeOf(sExtension), fnCallback);
 
-        this.sResponseType = responseTypeOf(sExtension);
-        /** @type {XMLHttpRequestEx} */
-        this.ajaxRequest = null;
-        /** @type {*} */
-        this.oData = null;
+        /** @private */ this.sResponseType = responseTypeOf(sExtension);
+        /** @private @type {*} */ this.oData = null;
 
-        /** @type {Array<*>} */
-        this.aQuery = [];
-        /** @type {Array<*>} */
-        this.aSending = [];
-    }
-
-    /** @private */
-    bind() {
-        this.ajaxRequest.evReadyStateChange = CacheData.prototype.evReadyStateChange.bind(this);
-        bindEvent(this.ajaxRequest, 'readystatechange', this.ajaxRequest.evReadyStateChange);
-    }
-
-    /** @private */
-    unbind() {
-        if (this.ajaxRequest === null)
-            return;
-
-        unbindEvent(this.ajaxRequest, 'readystatechange', this.ajaxRequest.evReadyStateChange);
-        delete this.ajaxRequest.evReadyStateChange;
+        /** @private @type {Array<*>} */ this.aQuery = [];
+        /** @private @type {Array<*>} */ this.aSending = [];
     }
 
     /**
@@ -725,20 +896,17 @@ class CacheData extends CacheItem {
         return this;
     }
 
-    create() {
-        if (this.ajaxRequest !== null)
-            return;
-
-        this.bReady = false;
-        this.ajaxRequest = new XMLHttpRequestEx();
-
-        this.bind();
-
+	/**
+	 * @override
+	 * @protected
+	 */
+    startAjax() {
+		let sPath = this.aUri[this.uIndex];
         if (this.aQuery.length > 0) {
-            this.ajaxRequest.open('POST', this.sPath, true);
+            this.ajaxRequest.open('POST', sPath, true);
             this.ajaxRequest.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
         } else {
-            this.ajaxRequest.open('GET', this.sPath, true);
+            this.ajaxRequest.open('GET', sPath, true);
         }
         this.ajaxRequest.responseType = this.sResponseType;
 
@@ -756,39 +924,53 @@ class CacheData extends CacheItem {
         }
     }
 
+	/**
+	 * @protected
+	 */
     cancel() {
-        if (this.idRepeat !== null) {
-            clearTimeout(this.idRepeat);
-            this.idRepeat = null;
-        }
+		this.stopAjax();
+	}
 
-        if (this.ajaxRequest === null)
-            return;
-
-        this.unbind();
-
-        if (this.bReady) {
-            this.bReady = false;
-        }
-
-        this.ajaxRequest = null;
-    }
-
+	/**
+	 * @override
+	 * @protected
+	 */
     release() {
-        this.oLoader.oCount.uError -= this.uRetry;
-        this.uRetry = 0;
+		super.release();
 
-        this.cancel();
-        this.aQuery = [];
+		this.aQuery = [];
         this.aSending = [];
     }
 
-    /** @private @param {*} _event */
-    evLoad(_event) {
-        this.oLoader.oCount.uError -= this.uRetry;
+	/**
+	 * @protected
+	 * @param {*} event
+	 */
+	onLoadAjax(event) {
+		this.unbindAjax();
+		this.evLoad(event);
+		this.ajaxRequest = null;
+	}
 
-        this.unbind();
-        this.bReady = true;
+	/**
+	 * @override
+	 * @protected
+	 */
+	onErrorAjax() {
+        if (this.aQuery.length > 0) {
+            for (let iIndex = 0; iIndex < this.aQuery.length; iIndex++) {
+                this.aSending.push(this.aQuery[iIndex]);
+            }
+            this.aQuery = this.aSending;
+            this.aSending = [];
+        }
+	}
+
+	/**
+	 * @protected
+	 * @param {*} event
+	 */
+    evLoad(event) {
         this.aSending = [];
 
         if (this.ajaxRequest.responseType == "") {
@@ -804,46 +986,7 @@ class CacheData extends CacheItem {
         } else
             this.oData = this.ajaxRequest.response;
 
-        this.oLoader.evLoad(this);
-        if (this.fnCallback !== null) this.fnCallback(this);
-    }
-
-    /** @private @param {*} _event */
-    evError(_event) {
-        this.oLoader.oCount.uError++;
-        this.oLoader.bStatus = true;
-
-        this.cancel();
-
-        if (this.aQuery.length > 0) {
-            for (let iIndex = 0; iIndex < this.aQuery.length; iIndex++) {
-                this.aSending.push(this.aQuery[iIndex]);
-            }
-            this.aQuery = this.aSending;
-            this.aSending = [];
-        }
-
-        //console.log(this.ajaxRequest.statusText);
-
-        this.uRetry++;
-        if ((this.iRepeat < 0) || (this.uRetry <= this.iRepeat)) {
-            this.uNext += 3000 + ((Math.random() * 2000) | 0);
-            if (this.uNext > 60000) this.uNext = 60000;
-            this.idRepeat = setTimeout(this.create.bind(this), this.uNext);
-        } else {
-            this.oLoader.evError(this);
-        }
-    }
-
-    /** @param {*} event */
-    evReadyStateChange(event) {
-        if (this.ajaxRequest.readyState === 4) {
-            if (this.ajaxRequest.status === 200) {
-                this.evLoad(event);
-            } else {
-                this.evError(event);
-            }
-        }
+		this.onLoadComplete();
     }
 }
 
@@ -901,6 +1044,9 @@ class LoaderImpl {
 		
 		/** @private */ this.sToken = "unknown";
 		/** @private */ this.sSession = "unknown";
+
+		/** @type {function(string):Array<string> | null} */
+		this.fnFileNamePreprocessor = null;
 	}
 
 	/**
@@ -1101,11 +1247,11 @@ class LoaderImpl {
      */
     query(sURL, oMessage, fnCallback) {
         let oURI = new URI(this.sBasePath, sURL);
-        let sPath = oURI.build();
+        let sUri = oURI.build();
         for (let i = this.aQueue.length - 1; i >= 0; i--) {
             let oQueueItem = this.aQueue[i];
             if (oQueueItem.oCacheItem !== null) {
-                if (oQueueItem.oCacheItem.sPath == sPath) {
+                if (oQueueItem.oCacheItem.sUri == sUri) {
                     let oCacheData = /** @type {CacheData} */ (oQueueItem.oCacheItem);
                     oCacheData.message(oMessage);
                     return;
@@ -1113,8 +1259,8 @@ class LoaderImpl {
             }
         }
 
-        let oCacheData = new CacheData(this, 'api', 'query', sPath, oURI.sExtension, fnCallback).message(oMessage);
-        this.aSearch.push('api:query:' + sPath);
+        let oCacheData = new CacheData(this, 'api', 'query', sUri, oURI.sExtension, fnCallback).message(oMessage);
+        this.aSearch.push('api:query:' + sUri);
         this.aQueue.push(new QueueItem(oCacheData, null));
         this.oCount.uTotal++;
     }
@@ -1179,7 +1325,7 @@ class LoaderImpl {
             let oCacheItem = this.aLoading[iIndex];
             oCacheItem.cancel();
             let oQueueItem = new QueueItem(oCacheItem, null);
-            this.aSearch.unshift(oCacheItem.sGroup + ':' + oCacheItem.sKey + ':' + oCacheItem.sPath);
+            this.aSearch.unshift(oCacheItem.sGroup + ':' + oCacheItem.sKey + ':' + oCacheItem.sUri);
             this.aQueue.unshift(oQueueItem);
         }
         this.aLoading = [];
