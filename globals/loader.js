@@ -139,7 +139,7 @@ class CacheItem {
 		this.sKey = sKey;
 		this.sUri = sUri;
 		this.aUri = (oLoader.fnFileNamePreprocessor === null) ? [ sUri ] : oLoader.fnFileNamePreprocessor(sUri);
-		/** @protected */ this.uIndex = 0;
+		this.uIndex = 0;
         this.sType = sType;
 
         /** @private */ this.fnCallback = fnCallback;
@@ -994,10 +994,7 @@ export class CacheData extends CacheItem {
     }
 }
 
-/** @typedef {Object<string, CacheItem>} LoaderCacheData */
-var LoaderCacheData;
-
-/** @typedef {Object<string, LoaderCacheData | CacheItem>} LoaderCache */
+/** @typedef {Object<string, Object<string, CacheItem>>} LoaderCache */
 var LoaderCache;
 
 class QueueItem {
@@ -1076,13 +1073,11 @@ class LoaderImpl {
      * @param {...*} va_args
      */
     load(oConfig, fnCallback, oThis, va_args) {
-        if (typeof oConfig === 'string')
-            this.loadGroup(null, oConfig, null);
-        else if (oConfig['files'] !== undefined)
-            this.loadGroup(null, oConfig['files'], null);
-        else if (oConfig['groups'] !== undefined)
-            for (var sGroup in oConfig['groups'])
-                this.loadGroup(sGroup, oConfig['groups'][sGroup], null);
+		for (var sGroup in oConfig) {
+			if (oConfig.hasOwnProperty(sGroup)) {
+				this.loadGroup(sGroup, oConfig[sGroup], null);
+			}
+		}
 
         if ((fnCallback !== undefined) && (fnCallback !== null)) {
             let args = Array.prototype.slice.call(arguments, 2);
@@ -1093,7 +1088,7 @@ class LoaderImpl {
     }
 
     /**
-     * @param {string | null} sGroup 
+     * @param {string} sGroup 
      * @param {*} oGroup 
      * @param {Function=} fnCallback
      */
@@ -1108,10 +1103,13 @@ class LoaderImpl {
             }
         } else {
             for (let sKey in oGroup) {
-                let oURI = new URI(this.sBasePath, oGroup[sKey]);
-                this.loadUri(sGroup, sKey, oURI, null);
+				if (oGroup.hasOwnProperty(sKey)) {
+                	let oURI = new URI(this.sBasePath, oGroup[sKey]);
+					this.loadUri(sGroup, sKey, oURI, null);
+				}
             }
-        }
+		}
+		
         if ((fnCallback !== undefined) && (fnCallback !== null)) {
             this.aSearch.push(fnCallback);
             this.aQueue.push(new QueueItem(null, fnCallback));
@@ -1120,7 +1118,7 @@ class LoaderImpl {
     }
 
     /**
-     * @param {string | null} sGroup 
+     * @param {string} sGroup 
      * @param {string} sKey 
      * @param {string} sURL 
      * @param {Function=} fnCallback
@@ -1132,7 +1130,7 @@ class LoaderImpl {
 
     /**
      * @private
-     * @param {string | null} sGroup 
+     * @param {string} sGroup 
      * @param {string} sKey 
      * @param {URI} oURI 
      * @param {Function=} fnCallback
@@ -1179,14 +1177,13 @@ class LoaderImpl {
      * @param {Function=} fnCallback
      */
     unload(oConfig, fnCallback) {
-        if (typeof oConfig === 'string')
-            this.unloadGroup(null, oConfig, null);
-        else if (oConfig['files'] !== undefined)
-            this.unloadGroup(null, oConfig['files'], null);
-        else if (oConfig['groups'] !== undefined)
-            for (var sGroup in oConfig['groups'])
-                this.unloadGroup(sGroup, oConfig['groups'][sGroup], null);
-        if ((fnCallback !== undefined) && (fnCallback !== null)) {
+		for (var sGroup in oConfig) {
+			if (oConfig.hasOwnProperty(sGroup)) {
+				this.unloadGroup(sGroup, oConfig[sGroup], null);
+			}
+		}
+
+		if ((fnCallback !== undefined) && (fnCallback !== null)) {
             let iIndex = this.aSearch.indexOf(fnCallback);
             if (iIndex >= 0) {
                 this.aSearch.splice(iIndex, 1);
@@ -1197,7 +1194,7 @@ class LoaderImpl {
     }
 
     /**
-     * @param {string | null} sGroup 
+     * @param {string} sGroup 
      * @param {*} oGroup 
      * @param {Function=} fnCallback
      */
@@ -1212,10 +1209,13 @@ class LoaderImpl {
             }
         } else {
             for (let sKey in oGroup) {
-                let oURI = new URI(this.sBasePath, oGroup[sKey]);
-                this.unloadUri(sGroup, sKey, oURI);
+				if (oGroup.hasOwnProperty(sKey)) {
+                	let oURI = new URI(this.sBasePath, oGroup[sKey]);
+					this.unloadUri(sGroup, sKey, oURI);
+				}
             }
-        }
+		}
+		
         if ((fnCallback !== undefined) && (fnCallback !== null)) {
             let iIndex = this.aSearch.indexOf(fnCallback);
             if (iIndex >= 0) {
@@ -1227,7 +1227,7 @@ class LoaderImpl {
     }
 
     /**
-     * @param {string | null} sGroup 
+     * @param {string} sGroup 
      * @param {string} sKey 
      * @param {string} sURL 
      */
@@ -1238,7 +1238,7 @@ class LoaderImpl {
 
     /**
      * @private
-     * @param {string | null} sGroup 
+     * @param {string} sGroup 
      * @param {string} sKey 
      * @param {URI} oURI 
      */
@@ -1251,15 +1251,12 @@ class LoaderImpl {
             this.oCount.uTotal--;
         }
 
-        if (sGroup !== null) {
-            if (this.oCache[sGroup] === undefined)
-                return;
-            if (this.oCache[sGroup].hasOwnProperty(sKey)) {
-                let o = /** @type {*} */ (this.oCache[sGroup]);
-                delete o[sKey];
-            }
-        } else
-            delete this.oCache[sKey];
+		if (this.oCache[sGroup] === undefined)
+			return;
+		if (this.oCache[sGroup].hasOwnProperty(sKey)) {
+			let o = /** @type {*} */ (this.oCache[sGroup]);
+			delete o[sKey];
+		}
     }
 
     /**
@@ -1376,15 +1373,12 @@ class LoaderImpl {
 
         for (let sGroup in this.oCache) {
             let oGroup = this.oCache[sGroup];
-            if (oGroup instanceof CacheItem) {
-                let oCacheItem = /** @type {CacheItem} */ (oGroup);
-                oCacheItem.release();
-            } else {
-                for (let sKey in oGroup) {
-                    let oCacheItem = /** @type {CacheItem} */ (oGroup[sKey]);
-                    oCacheItem.release();
-                }
-            }
+			for (let sKey in oGroup) {
+				if (oGroup.hasOwnProperty(sKey)) {
+					let oCacheItem = /** @type {CacheItem} */ (oGroup[sKey]);
+					oCacheItem.release();
+				}
+			}
         }
         this.oCache = {};
 
@@ -1394,39 +1388,53 @@ class LoaderImpl {
     }
 
     /**
+	 * @protected
      * @param {CacheItem} oCacheItem
      */
     cache(oCacheItem) {
-		if (oCacheItem.sKey !== null) {
-			if (oCacheItem.sGroup !== null) {
-				if (this.oCache[oCacheItem.sGroup] === undefined)
-					this.oCache[oCacheItem.sGroup] = {};
+		if ((oCacheItem.sKey !== null) && (oCacheItem.sGroup !== null)) {
+			if (this.oCache[oCacheItem.sGroup] === undefined)
+				this.oCache[oCacheItem.sGroup] = {};
 
-				let o = /** @type {*} */ (this.oCache[oCacheItem.sGroup]);
-				o[oCacheItem.sKey] = oCacheItem;
-			} else
-				this.oCache[oCacheItem.sKey] = oCacheItem;
+			let o = /** @type {*} */ (this.oCache[oCacheItem.sGroup]);
+			o[oCacheItem.sKey] = oCacheItem;
 		}
     }
 
     /**
+	 * @protected
      * @param {CacheItem} oCacheItem
      */
     uncache(oCacheItem) {
-		if (oCacheItem.sKey !== null) {
-			if (oCacheItem.sGroup !== null) {
-				if (this.oCache[oCacheItem.sGroup] === undefined)
-					return;
-				if (this.oCache[oCacheItem.sGroup].hasOwnProperty(oCacheItem.sKey)) {
-					let o = /** @type {*} */ (this.oCache[oCacheItem.sGroup]);
-					delete o[oCacheItem.sKey];
-				}
-			} else
-				delete this.oCache[oCacheItem.sKey];
+		if ((oCacheItem.sKey !== null) && (oCacheItem.sGroup !== null)) {
+			if (this.oCache[oCacheItem.sGroup] === undefined)
+				return;
+			if (this.oCache[oCacheItem.sGroup].hasOwnProperty(oCacheItem.sKey)) {
+				let o = /** @type {*} */ (this.oCache[oCacheItem.sGroup]);
+				delete o[oCacheItem.sKey];
+			}
 		}
-    }
+	}
+	
+	/**
+	 * @param {string} sGroup 
+	 * @param {string} sKey 
+	 * @returns {CacheItem | null}
+	 */
+	get(sGroup, sKey) {
+		if (this.oCache.hasOwnProperty(sGroup)) {
+			let oGroup = this.oCache[sGroup];
+			if (oGroup.hasOwnProperty(sKey)) {
+				let oCacheItem = /** @type {CacheItem} */ (oGroup[sKey]);
+				return oCacheItem;
+			}
+		}
+
+		return null;
+	}
 
     /**
+	 * @protected
      * @param {CacheItem} oCacheItem
      */
     evLoad(oCacheItem) {
@@ -1438,6 +1446,7 @@ class LoaderImpl {
     }
 
     /**
+	 * @protected
      * @param {CacheItem} oCacheItem
      */
     evError(oCacheItem) {
