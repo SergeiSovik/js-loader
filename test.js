@@ -16,4 +16,4 @@
 
 "use strict";
 
-platform.console.log('js-loader', 'Skip Test');
+//platform.console.log('js-loader', 'Skip Test');
